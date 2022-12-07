@@ -1,1 +1,1 @@
-# PriceIfAlgorithmicPricing
+# PriceOfAlgorithmicPricing
