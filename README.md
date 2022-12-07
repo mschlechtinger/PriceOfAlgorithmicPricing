@@ -7,7 +7,7 @@ to start a run, please execute main.py
 ## arguments
 | argument        | type  | default | choices                     |
 |-----------------|-------|---------|-----------------------------|
-| --algorithm     | str   | "PPO"   |                             |
+| --algorithm     | str   | "PPO"   | "PPO", "DQN"                |
 | --gpuid         | str   |         |                             |
 | --num_agents    | int   | 3       |                             |
 | --late_join_ep  | int   |         |                             |
