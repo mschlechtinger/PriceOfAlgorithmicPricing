@@ -17,6 +17,7 @@ to start a run, please execute main.py
 | --blind         | bool  | False   |                             |
 | --no-quantity   | bool  | False   |                             |
 | --shared-policy | bool  | False   |                             |
+| --local-log     | bool  | False   |                             |
 
 ### example arguments to start scenario A
 --algorithm "PPO" --num-agents 3 --bias 0 --no-quantity
