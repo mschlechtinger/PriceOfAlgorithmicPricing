@@ -1,5 +1,5 @@
 # PriceOfAlgorithmicPricing
-This project was built with [Ray's RLLIB](https://docs.ray.io/en/latest/rllib/index.html)
+This project was built using [Ray's RLLIB](https://docs.ray.io/en/latest/rllib/index.html)
 
 ## launch
 to start a run, please execute main.py
