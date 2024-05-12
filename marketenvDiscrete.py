@@ -1,6 +1,7 @@
 from gym.spaces import Box, Dict, Discrete
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
 from ray.rllib.utils.spaces.repeated import Repeated
+from supervisionHelper import SupervisionHelper
 import torch
 import torch.nn as nn
 
@@ -14,6 +15,8 @@ MAX_VAL = np.inf  # np.inf not possible with sigmoid
 
 class MarketEnvDiscrete(MultiAgentEnv):
     def __init__(self, config):
+        # super().__init__(self)
+        
         # Define action and observation space
         print('CONFIG ---------------------------------------------------------------------')
         print(config)
@@ -47,7 +50,7 @@ class MarketEnvDiscrete(MultiAgentEnv):
             print("no confounders applied")
 
         # action space
-        self.action_space = Discrete(self.action_gradients**self.num_actions)  # price & quantity
+        self.action_space = Discrete(self.action_gradients ** self.num_actions)  # price & quantity
 
         # obs space
         self.price_space = Box(self.price_bounds[0], self.price_bounds[1], shape=(1,), dtype=np.float32)
@@ -62,12 +65,15 @@ class MarketEnvDiscrete(MultiAgentEnv):
 
         self.observation_space = Repeated(self.player_space, max_len=self.num_agents + len(self.late_join_ep))
 
-        setattr(self.observation_space, "_shape", [self.observation_space.max_len] + list(self.observation_space.child_space.shape))  # workaround for SAC Trainer
+        setattr(self.observation_space, "_shape", [self.observation_space.max_len] + list(
+            self.observation_space.child_space.shape))  # workaround for SAC Trainer
+
         # create action mapping to translate discrete actions to two values (price & quantity)
         self.action_mapping = []
         for element in itertools.product(*[range(self.action_gradients) for _ in range(self.num_actions)]):
             self.action_mapping.append(element)
 
+        # set other market relevant values
         self.cost = config['unit_cost']
         self.max_price = config['max_price']
         self.start_cost = self.cost
@@ -84,6 +90,14 @@ class MarketEnvDiscrete(MultiAgentEnv):
                 'price': np.array([self.cost]),
                 'quantity': np.array([1.0]),
             } for i in range(self.num_agents)]
+
+        # init supervisor
+        self.supervisor = bool(config['supervision'])
+        if self.supervisor:
+            self.supervisor = SupervisionHelper(self.num_agents, self.max_steps, self.action_gradient_max)
+            self.classification_accuracies = {}
+            self.regression_error_values = {}
+            self.supervision_reward_factors = []
 
     def step(self, action_dict):
         self.current_step += 1
@@ -170,7 +184,6 @@ class MarketEnvDiscrete(MultiAgentEnv):
         """
         orders = dict.fromkeys(range(self.num_agents), 0)
 
-
         # calc sum of the inverses
         sum_inverse_prices = sum(
             [np.clip(self.max_price - a['price'], 0, self.max_price) for a in self.agents]
@@ -236,8 +249,8 @@ class MarketEnvDiscrete(MultiAgentEnv):
             {
                 'id': i,
                 # 'capital': np.array([self.start_capital]),
-                'price': np.array([np.random.uniform(low=self.cost*.5, high=self.cost*1.5)]),
-                'quantity': np.array([np.random.uniform(low=1, high=self.demand*2)]),
+                'price': np.array([np.random.uniform(low=self.cost * .5, high=self.cost * 1.5)]),
+                'quantity': np.array([np.random.uniform(low=1, high=self.demand * 2)]),
             } for i in range(self.num_agents)]
 
         self.total_quantity_sold = 0

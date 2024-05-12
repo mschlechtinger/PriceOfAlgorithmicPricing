@@ -19,6 +19,8 @@ class MarketEnvDiscreteNoQuantity(MarketEnvDiscrete):
 
         self.observation_space = Repeated(self.player_space, max_len=self.num_agents + len(self.late_join_ep))
 
+        self.counter = [0] * self.num_agents
+
     def _discretize_actions(self, action_dict):
         # map action to price only
         for agent, action in zip(self.agents, action_dict.values()):
@@ -43,6 +45,27 @@ class MarketEnvDiscreteNoQuantity(MarketEnvDiscrete):
 
         # translate action to env
         self._discretize_actions(action_dict)
+
+        # supervisor actions
+        if self.supervisor:
+            self.supervisor.report_prices(self.current_episode, self.current_step, self.agents)
+
+            # if self.current_step == 1:
+            self.classification_accuracies = self.supervisor.classification()
+            self.regression_error_values = self.supervisor.regression()
+            self.supervision_reward_factors = [self.supervisor.calc_reward_factors(c_acc, r_mae) for c_acc, r_mae in zip(
+                list(self.classification_accuracies.values()),
+                list(self.regression_error_values.values()))
+                                          ]
+
+            # TODO: USE TIME SERIES FACTORS
+            # self.supervision_reward_factors = self.supervisor.calc_reward_factors_time_series()
+
+            # TODO: ACTION MASK ONE AGENT
+            # new_prices = self.supervisor.action_mask_random_agent(self.supervision_reward_factors)
+            # for new_price, agent in zip(new_prices, self.agents):
+            #     agent['price'] = np.array([new_price])
+
         orders = self._calc_orders()
 
         # write to agent-list
@@ -62,7 +85,38 @@ class MarketEnvDiscreteNoQuantity(MarketEnvDiscrete):
             agent['profit'] = agent['revenue'] - (agent['quantity'] * self.cost)
             # agent['capital'] += profit
 
-            rewards[agent['id']] = agent["profit"][0]  # REWARDS ARE CLIPPED TODO: WHAT HAPPENS IF NOT CLIPPED?
+            # calculate reward
+            if self.supervisor:
+
+
+                # avoid division by zero
+                # if self.supervision_reward_factors[agent["id"]] == 0:
+                #     self.supervision_reward_factors[agent["id"]] = 0.00000000001
+                #
+                # rewards[agent['id']] = agent['profit'][0] * self.supervision_reward_factors[agent["id"]] \
+                #     if agent['profit'][0] >= 0 else agent['profit'][0] # / self.supervision_reward_factors[agent["id"]]
+
+                # supervision as STATIC (profit) and SPARSE (punishment) reward
+                rewards[agent['id']] = agent['profit'][0]
+
+                # TODO: SPARSE PUNISHMENT AFTER COUNTER REACHES 5
+                # SPARSE PUNISHMENT WHEN
+                if self.supervision_reward_factors[agent["id"]] < 0.25:
+                    self.counter[agent["id"]] += 1
+
+                    if self.counter[agent["id"]] >= 100:
+                        rewards[agent['id']] = -10000
+                        self.counter[agent["id"]] = 0
+
+                # wenn supervision zwischen 0 und 1 ist:
+                #   für positiv: reward * (1 - supervision_reward)
+                #   für negativ: reward + (reward * abs(1 - abs(supervision_reward)))
+                # wenn supervision 0-inf ist:
+                #   für positiv: reward * supervision_reward
+                #   für negativ: reward / supervision_reward
+                # rewards[agent['id']] = self.supervision_reward_factors[agent["id"]]
+            else:
+                rewards[agent['id']] = agent["profit"][0]
 
             if self.current_step >= self.max_steps:
                 self.done[agent['id']] = True

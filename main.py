@@ -6,6 +6,7 @@ from typing import Dict
 
 import numpy as np
 import ray
+import uuid
 from ray.rllib import BaseEnv
 from ray.rllib.agents import ppo, dqn
 from ray.rllib.agents.callbacks import DefaultCallbacks
@@ -15,8 +16,8 @@ from ray.rllib.policy.policy import PolicySpec
 from ray.rllib.utils import try_import_torch
 from ray.tune import register_env
 
-from marketendDiscreteNoQuantity import MarketEnvDiscreteNoQuantity
-from marketendDiscreteNoQuantityBlind import MarketEnvDiscreteNoQuantityBlind
+from marketenvDiscreteNoQuantity import MarketEnvDiscreteNoQuantity
+from marketenvDiscreteNoQuantityBlind import MarketEnvDiscreteNoQuantityBlind
 from marketenvDiscrete import MarketEnvDiscrete
 
 torch, nn = try_import_torch()
@@ -32,29 +33,42 @@ parser.add_argument('--bias', help="0 = no bias, 1 = full bias towards lowest pr
 parser.add_argument('--blind', action='store_true', default=False)
 parser.add_argument('--no-quantity', action='store_true', default=False)
 parser.add_argument('--shared-policy', action='store_true', default=False)
+parser.add_argument('--local-log', help='use this to run it locally in pycharm', action='store_true', default=False)
+parser.add_argument('--custom-filename', type=str)
+parser.add_argument('--supervision', help='activate another agent that controls the agents\' actions', action='store_true', default=False)
 
 
 class TensorboardCallbacks(DefaultCallbacks):
     def __init__(self):
         super().__init__()
         self.episode_counter = 0
-        manual_log_path = "YOUR LOG PATH HERE"  # only for server run
+
+        manual_log_path = "./local_logs/" if args.local_log else "/ceph/mischlec/RL/ppo market runs results/new/"
         self.num_agents = args.num_agents + len(args.late_join_ep)
         blind = "blind_" if args.blind else ""
+        custom_filename = args.custom_filename if args.custom_filename else ""
         shared_policy = "shared_policy_" if args.shared_policy else ""
-        self.filename = manual_log_path + \
-                        shared_policy + \
-                        args.algorithm + "_" + \
-                        str(self.num_agents) + "a_" + \
-                        blind + \
-                        "bias" + str(args.bias) + "_" + \
-                        time.strftime("%Y_%m_%d-%H_%M_%S") + '.csv'
+        supervision = "supervision/" if args.supervision else ""
+        myuuid = str(uuid.uuid4())[:8]
+        self.episode_rows = []
+
+        self.filename = (manual_log_path +
+                         supervision +
+                         shared_policy +
+                         args.algorithm + "_" +
+                         str(self.num_agents) + "a_" +
+                         blind +
+                         "bias" + str(args.bias) + "_" +
+                         time.strftime("%Y_%m_%d-%H_%M_%S") + "_" +
+                         custom_filename + "_" +
+                         myuuid + '.csv')
 
     def on_episode_start(self, worker: RolloutWorker, base_env: MarketEnvDiscrete, policies: Dict[str, Policy],
                          episode: MultiAgentEpisode, **kwargs):
         episode.user_data["agents"] = []
         episode.user_data["agent_rewards"] = None
         self.episode_counter += 1
+        self.episode_rows = []
 
     def on_episode_step(self, worker: RolloutWorker, base_env: BaseEnv, episode: MultiAgentEpisode, **kwargs):
         # executed before step
@@ -69,47 +83,59 @@ class TensorboardCallbacks(DefaultCallbacks):
 
             episode.user_data["agents"].append(agents)
 
-        if args.manual_log:
-            # manual logging to csv
-            for agent in unwrapped_env.agents:
-                file_exists = os.path.isfile(self.filename)
+        # manual logging to csv
+        for agent in unwrapped_env.agents:
+            left_over, revenue, profit, sold_units = 0, 0, 0, 0
+            if "left_over" in agent:
+                left_over = agent['left_over']
+            if "revenue" in agent:
+                revenue = agent['revenue']
+            if "profit" in agent:
+                profit = agent['profit'][0]
+            if "sold_units" in agent:
+                sold_units = revenue/agent["price"][0]
 
-                with open(self.filename, 'a') as csvfile:
-                    fieldnames = ['agent_id', 'episode_id', 'step', 'price', 'quantity', 'capital', 'costs',
-                                  'profit', 'revenue', 'demand_for_price', 'sold_units', 'leftover_units']
-                    writer = csv.DictWriter(csvfile, delimiter=',', lineterminator='\n', fieldnames=fieldnames)
-                    if not file_exists:
-                        writer.writeheader()  # file doesn't exist yet, write a header
-
-                    left_over, revenue, profit, sold_units = 0, 0, 0, 0
-                    if "left_over" in agent:
-                        left_over = agent['left_over']
-                    if "revenue" in agent:
-                        revenue = agent['revenue']
-                    if "profit" in agent:
-                        profit = agent['profit'][0]
-                    if "sold_units" in agent:
-                        sold_units = revenue/agent["price"][0]
-
-                    writer.writerow({'agent_id': agent["id"],
-                                     'episode_id': self.episode_counter,
-                                     'step': unwrapped_env.current_step,
-                                     'price': agent["price"][0],
-                                     'quantity': agent["quantity"][0],
-                                     # 'capital': agent["capital"][0],
-                                     'costs': unwrapped_env.cost,
-                                     'revenue': revenue,
-                                     'profit': profit,
-                                     'demand_for_price': unwrapped_env.calc_demand(agent["price"])[0],
-                                     'sold_units': sold_units,
-                                     'leftover_units': left_over,
-                                     },)
+            self.episode_rows.append(
+                {'agent_id': agent["id"],
+                 'episode_id': self.episode_counter,
+                 'step': unwrapped_env.current_step,
+                 'price': agent["price"][0],
+                 'quantity': agent["quantity"][0],
+                 # 'capital': agent["capital"][0],
+                 'costs': unwrapped_env.cost,
+                 'revenue': revenue,
+                 'profit': profit,
+                 'demand_for_price': unwrapped_env.calc_demand(agent["price"])[0],
+                 'sold_units': sold_units,
+                 'leftover_units': left_over,
+                 'classification_accuracy': unwrapped_env.classification_accuracies[f'agent_{agent["id"]}_accuracy'],
+                 'regression_error_value': unwrapped_env.regression_error_values[f'agent_{agent["id"]}_error_value'],
+                 'supervision_reward_factor': unwrapped_env.supervision_reward_factors[agent["id"]],
+                 'reward': episode.last_reward_for(agent["id"]),
+                 'action': episode.last_action_for(agent["id"]),
+                 },
+            )
 
     def on_episode_end(self, worker: RolloutWorker, base_env: MarketEnvDiscrete, policies: Dict[str, Policy],
                        episode: MultiAgentEpisode, **kwargs):
-        # # optimal price & quantity
-        # episode.custom_metrics["optimal_price/"], episode.custom_metrics["optimal_quantity/"] = \
-        #     self._calc_optimal_price(base_env.get_unwrapped()[0])
+        # WRITE TO FILE
+        if args.manual_log:
+            file_exists = os.path.isfile(self.filename)
+
+            with open(self.filename, 'a') as csvfile:
+
+                fieldnames = ['agent_id', 'episode_id', 'step', 'price', 'quantity', 'capital', 'costs',
+                              'profit', 'revenue', 'demand_for_price', 'sold_units', 'leftover_units',
+                              'classification_accuracy', 'regression_error_value', 'supervision_reward_factor',
+                              'reward', 'action']
+                writer = csv.DictWriter(csvfile, delimiter=',', lineterminator='\n', fieldnames=fieldnames)
+                if not file_exists:
+                    writer.writeheader()  # file doesn't exist yet, write a header
+
+                for row in self.episode_rows:
+                    writer.writerow(row)
+
+        # LOG CUSTOM METRICS
         for agentId in range(self.num_agents):
             # rewards
             episode_reward = episode.agent_rewards.get((agentId, 'default_policy'))
@@ -143,7 +169,6 @@ class TensorboardCallbacks(DefaultCallbacks):
                 episode.custom_metrics["avg_quantity/" + str(agentId)] = 0
                 episode.custom_metrics["unused_market_potential/" + str(agentId)] = 0
 
-
     def _calc_optimal_price(self, env):
         cost = env.cost
         max_earnings = 0
@@ -176,6 +201,7 @@ if __name__ == "__main__":
     np.seterr('raise')
 
     env_config = {
+            "supervision": args.supervision,
             "num_agents": args.num_agents,
             "late_join_ep": [int(''.join(episodeStr)) for episodeStr in args.late_join_ep],
             "max_steps": 365,
@@ -185,7 +211,7 @@ if __name__ == "__main__":
             "unit_cost": 1,
             "max_price": 2,
             "bias": args.bias,
-            "num_action_gradients": 7,   # was 83
+            "num_action_gradients": 51,
             "num_actions": 1 if args.no_quantity else 2
             # TODO: add confounding factors
             # "demand_change_steps": [5e+6, 6e+6],
@@ -193,7 +219,7 @@ if __name__ == "__main__":
             # "confounders": tune.grid_search(["modulate_no_of_agents", "modulate_costs", "modulate_demand"])
         }
     # generate num of default policies
-    policies = {str(agent_id): PolicySpec() for agent_id in range(args.num_agents)}
+    policies = {str(agent_id): PolicySpec() for agent_id in range(args.num_agents + len(args.late_join_ep))}
     ppoconfig = {
         "env_config": env_config,
         "env": "marketenv",
@@ -249,33 +275,12 @@ if __name__ == "__main__":
     if args.algorithm == "PPO":
         trainer = ppo.PPOTrainer(config=ppoconfig, logger_creator=None)
 
-    # if args.algorithm == "MIX":
-    #     mixconfig = {
-    #         "env_config": env_config,
-    #         "multiagent": {
-    #             "policies": {
-    #                 "ppo_policy": PolicySpec(config=ppoconfig),
-    #                 "dqn_policy": PolicySpec(config=dqnconfig)
-    #             },
-    #             # Map to either ppopolicy or dqnpolicy behavior based on the agent's ID.
-    #             "policy_mapping_fn": (
-    #                 lambda aid, **kwargs: ["ppo_policy", "dqn_policy"][aid % 2]
-    #             ),
-    #             "policies_to_train": ["dqn_policy", "ppo_policy"],
-    #         },
-    #         "model": {
-    #             "fcnet_hiddens": [256, 256]
-    #             #     "custom_model": "my_model",
-    #             #     "vf_share_layers": True,
-    #         },
-    #         "env": "marketenv",
-    #         "callbacks": TensorboardCallbacks,
-    #         "lr": 1e-5,  # try different lrs
-    #         "num_workers": 0 if args.pycharm else 4,  # parallelism
-    #         "framework": args.framework,
-    #         "num_gpus": 0 if not args.gpuid else 4,
-    #         # "num_cpus": 1,  # deactivate if running locally
-    #     }
+    # restart from checkpoint
+    # analysis = ray.tune.analysis.ExperimentAnalysis('/') # TODO PATH TO RAY LOGDIR HERE
+    # checkpoint_dir = analysis.get_best_config(metric=self._config['metric'])
+    # checkpoint_path = # < your code to extract latest checkpoint file from the best logdir >
+    # trainer.restore(checkpoint_path)
+
 
     policy = trainer.get_policy()
     # print(policy.model.base_model.summary())
