@@ -18,9 +18,16 @@ to start a run, please execute main.py
 | --no-quantity   | bool  | False   |                             |
 | --shared-policy | bool  | False   |                             |
 | --local-log     | bool  | False   |                             |
+| --custom-filename| str  |         |                             |
+| --supervision   | bool  | False   |                             |
 
-### example arguments to start scenario A
+## Schlechtinger et al. (2023) & Schlechtinger et al. (2024)
+### example arguments to start scenario A 
 --algorithm "PPO" --num-agents 3 --bias 0 --no-quantity
 
 ### arguments to start scenario B
 --algorithm "PPO" --num-agents 3 --bias 0 --no-quantity --blind
+
+## "Breaking the Cycle - Preventing Pricing AIs from Engagig in Collusion" (2024)
+### example arguments to prevent collusion sparsely
+--algorithm "PPO" --num-agents 3 --bias 1 --no-quantity --supervision
